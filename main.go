@@ -194,14 +194,14 @@ func (g *Game) Update() error {
 				bb = 0
 
 				if g.keepRed {
-					rr = byte(rand.Intn(255))
+					rr = byte(rand.Intn(155) + 100)
 				}
 
 				if g.keepBlue {
-					bb = byte(rand.Intn(255))
+					bb = byte(rand.Intn(155) + 100)
 				}
 				if g.keepGreen {
-					gg = byte(rand.Intn(255))
+					gg = byte(rand.Intn(155) + 100)
 				}
 
 				g.boxUpdateLock.Lock()
