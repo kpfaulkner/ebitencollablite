@@ -42,7 +42,8 @@ type Game struct {
 	boxUpdateLock sync.Mutex
 
 	// indicates update/draw should do its thing
-	readyToRun bool
+	readyToSend bool
+	readyToDraw bool
 
 	// do we have full/orig doc loaded?
 	fullDocLoaded bool
@@ -58,46 +59,65 @@ type Game struct {
 
 	updateSpeedCount int
 
-	callbackCount int
+	callbackCount      int
+	totalCallbackCount int
 
 	rps int
+
+	objectID string
+
+	startTime time.Time
+	cbrps     float64
 }
 
-func NewGame(boxSize int, widthInBoxes int, heightInBoxes int) *Game {
+func NewGame(boxSize int, widthInBoxes int, heightInBoxes int, objectID string) *Game {
 	g := Game{}
 	g.boxes = make(map[image.Point]box)
 	g.boxSize = boxSize
 	g.screenwidth = widthInBoxes * boxSize
 	g.screenheight = heightInBoxes * boxSize
-	g.fullDocLoaded = false
-	g.readyToRun = false
-	g.readyToRun = false
 	g.ctx = context.Background()
-	g.cli = client.NewClient("localhost:50051")
-	g.cli.RegisterCallback(g.cb)
 	g.widthInBoxes = widthInBoxes
 	g.heightInBoxes = heightInBoxes
-
+	g.objectID = objectID
 	g.buffer = make([]box, 1000)
+	g.cli = client.NewClient("localhost:50051")
 
-	err := g.cli.Connect(g.ctx)
-	if err != nil {
-		log.Fatalf("Unable to connect to server: %v", err)
-	}
-
-	go g.cli.Listen(g.ctx)
-
-	err = g.cli.RegisterToObject(g.ctx, "graphical")
-	if err != nil {
-		log.Fatalf("Unable to register object server: %v", err)
-	}
+	go g.connectAndRegister()
 
 	return &g
 }
 
+func (g *Game) connectAndRegister() error {
+
+	for {
+		g.readyToSend = false
+		g.cli.RegisterCallback(g.cb)
+
+		err := g.cli.Connect(g.ctx)
+		if err != nil {
+			log.Fatalf("Unable to connect to server: %v", err)
+		}
+
+		err = g.cli.RegisterToObject(g.ctx, g.objectID)
+		if err != nil {
+			log.Fatalf("Unable to register object server: %v", err)
+		}
+
+		g.readyToSend = true
+		log.Debugf("listen start")
+		g.cli.Listen(g.ctx)
+		log.Debugf("listen end")
+		g.readyToSend = false
+		time.Sleep(500 * time.Millisecond)
+	}
+	return nil
+}
+
 func (g *Game) LoadOriginalObject(objectID string) error {
+	log.Debugf("LoadOriginalObject called")
 	// registration and listening done... now load the full doc.
-	origChanges, err := g.cli.GetObject("graphical")
+	origChanges, err := g.cli.GetObject(g.objectID)
 	if err != nil {
 		log.Fatalf("unable to get original object: %v", err)
 	}
@@ -105,7 +125,7 @@ func (g *Game) LoadOriginalObject(objectID string) error {
 	for _, c := range origChanges {
 
 		// yes this is duped code.. just trying to see if the idea works. If so, will refactor to be common. FIXME(kpfaulkner)
-		if c.PropertyID != "" {
+		if c.PropertyID != "" && c.PropertyID != g.objectID {
 			sp := strings.Split(c.PropertyID, "-")
 			x, _ := strconv.Atoi(sp[0])
 			y, _ := strconv.Atoi(sp[1])
@@ -123,7 +143,9 @@ func (g *Game) LoadOriginalObject(objectID string) error {
 	g.buffer = []box{}
 
 	g.fullDocLoaded = true
-	g.readyToRun = true
+	g.readyToSend = true
+	g.readyToDraw = true
+	log.Debugf("LoadOriginalObject end")
 	return nil
 }
 
@@ -182,7 +204,7 @@ func (g *Game) Update() error {
 	var rr byte
 	var bb byte
 	var gg byte
-	if g.readyToRun {
+	if g.readyToSend {
 		if g.sending {
 			for i := 0; i < 1; i++ {
 				x := rand.Intn(g.widthInBoxes)
@@ -208,10 +230,10 @@ func (g *Game) Update() error {
 				g.boxes[image.Point{x, y}] = box{colour: color.RGBA{rr, gg, bb, 255}, Point: image.Point{x, y}}
 				g.boxUpdateLock.Unlock()
 
-				change := client.OutgoingChange{ObjectID: "graphical", PropertyID: prop, Data: []byte{rr, gg, bb, 255}}
+				change := client.OutgoingChange{ObjectID: g.objectID, PropertyID: prop, Data: []byte{rr, gg, bb, 255}}
 				err := g.cli.SendChange(&change)
 				if err != nil {
-					log.Fatalf("Cannot send %v", change)
+					log.Errorf("Cannot send %v", change)
 				}
 			}
 		}
@@ -239,7 +261,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	//t := time.Now()
 
-	if g.readyToRun {
+	if g.readyToDraw {
 		g.boxUpdateLock.Lock()
 		for _, box := range g.boxes {
 			ebitenutil.DrawRect(screen, float64(box.X*g.boxSize), float64(box.Y*g.boxSize), float64(g.boxSize), float64(g.boxSize), box.colour)
@@ -250,8 +272,18 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	}
 	ebitenutil.DebugPrint(screen, fmt.Sprintf("CONFLICTS : %d", g.cli.GetConflictsCount()))
 	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("HASH : %s", g.generateHashOfBoxes()), 0, 20)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("CB : %d", g.callbackCount), 0, 30)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("CHANGES : %d", g.cli.GetChangeCount()), 0, 40)
+
+	if time.Now().Sub(g.startTime) > time.Second {
+		secsSinceStart := time.Since(g.startTime).Seconds()
+		g.cbrps = float64(g.callbackCount) / secsSinceStart
+		g.totalCallbackCount += g.callbackCount
+		g.callbackCount = 0
+		g.startTime = time.Now()
+	}
+
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("TOT CB : %d", g.totalCallbackCount), 0, 30)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("CB : %0.2f", g.cbrps), 0, 40)
+	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("CHANGES : %d", g.cli.GetChangeCount()), 0, 50)
 
 }
 
@@ -261,6 +293,7 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeigh
 
 func main() {
 
+	objectID := flag.String("id", "graphical", "id of object")
 	logLevel := flag.String("loglevel", "info", "Log Level: debug, info, warn, error")
 	send := flag.Bool("send", false, "send updates")
 	red := flag.Bool("red", false, "keep red static")
@@ -272,15 +305,16 @@ func main() {
 	common.SetLogLevel(*logLevel)
 
 	rand.Seed(time.Now().Unix())
-	g := NewGame(50, 10, 10)
+	g := NewGame(50, 10, 10, *objectID)
 	g.sending = *send
 	g.generateBoxes()
 	g.keepBlue = *blue
 	g.keepGreen = *green
 	g.keepRed = *red
 	g.rps = *rps
+	g.startTime = time.Now()
 
-	err := g.LoadOriginalObject("graphical")
+	err := g.LoadOriginalObject(*objectID)
 	if err != nil {
 		log.Fatalf("unable to load original object: %v", err)
 	}
