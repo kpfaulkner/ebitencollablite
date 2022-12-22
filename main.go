@@ -70,7 +70,7 @@ type Game struct {
 	cbrps     float64
 }
 
-func NewGame(boxSize int, widthInBoxes int, heightInBoxes int, objectID string) *Game {
+func NewGame(boxSize int, widthInBoxes int, heightInBoxes int, objectID string, host string) *Game {
 	g := Game{}
 	g.boxes = make(map[image.Point]box)
 	g.boxSize = boxSize
@@ -81,7 +81,7 @@ func NewGame(boxSize int, widthInBoxes int, heightInBoxes int, objectID string) 
 	g.heightInBoxes = heightInBoxes
 	g.objectID = objectID
 	g.buffer = make([]box, 1000)
-	g.cli = client.NewClient("localhost:50051")
+	g.cli = client.NewClient(host)
 
 	go g.connectAndRegister()
 
@@ -263,6 +263,7 @@ func (g *Game) Draw(screen *ebiten.Image) {
 
 	if g.readyToDraw {
 		g.boxUpdateLock.Lock()
+
 		for _, box := range g.boxes {
 			ebitenutil.DrawRect(screen, float64(box.X*g.boxSize), float64(box.Y*g.boxSize), float64(g.boxSize), float64(g.boxSize), box.colour)
 		}
@@ -293,6 +294,7 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeigh
 
 func main() {
 
+	host := flag.String("host", "10.0.0.108:50051", "host:port of server")
 	objectID := flag.String("id", "graphical", "id of object")
 	logLevel := flag.String("loglevel", "info", "Log Level: debug, info, warn, error")
 	send := flag.Bool("send", false, "send updates")
@@ -305,7 +307,7 @@ func main() {
 	common.SetLogLevel(*logLevel)
 
 	rand.Seed(time.Now().Unix())
-	g := NewGame(50, 10, 10, *objectID)
+	g := NewGame(50, 10, 10, *objectID, *host)
 	g.sending = *send
 	g.generateBoxes()
 	g.keepBlue = *blue
@@ -335,7 +337,7 @@ func main() {
 	}
 
 	ebiten.SetWindowSize(500, 500)
-	ebiten.SetWindowTitle(title)
+	ebiten.SetWindowTitle(fmt.Sprintf("%s  -  %s", title, *objectID))
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
 	}
