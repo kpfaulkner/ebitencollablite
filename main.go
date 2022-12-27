@@ -12,7 +12,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hajimehoshi/ebiten/v2/examples/resources/fonts"
+	"github.com/hajimehoshi/ebiten/v2/text"
 	log "github.com/sirupsen/logrus"
+	"golang.org/x/image/font"
+	"golang.org/x/image/font/opentype"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/ebitenutil"
@@ -27,9 +31,19 @@ type box struct {
 	image.Point
 }
 
+type GameObject struct {
+	boxes map[image.Point]box
+}
+
+func NewGameObject() *GameObject {
+	g := GameObject{}
+	g.boxes = make(map[image.Point]box)
+	return &g
+}
+
 type Game struct {
 	boxSize       int
-	boxes         map[image.Point]box
+	object        *GameObject
 	screenwidth   int
 	screenheight  int
 	widthInBoxes  int
@@ -68,11 +82,13 @@ type Game struct {
 
 	startTime time.Time
 	cbrps     float64
+
+	mplusBigFont font.Face
 }
 
 func NewGame(boxSize int, widthInBoxes int, heightInBoxes int, objectID string, host string) *Game {
 	g := Game{}
-	g.boxes = make(map[image.Point]box)
+	g.object = NewGameObject()
 	g.boxSize = boxSize
 	g.screenwidth = widthInBoxes * boxSize
 	g.screenheight = heightInBoxes * boxSize
@@ -94,6 +110,7 @@ func (g *Game) connectAndRegister() error {
 		g.readyToSend = false
 		g.cli.RegisterCallback(g.cb)
 
+		g.cli.RegisterConverters(g.ConvertFromObject, g.ConvertToObject)
 		err := g.cli.Connect(g.ctx)
 		if err != nil {
 			log.Fatalf("Unable to connect to server: %v", err)
@@ -109,7 +126,7 @@ func (g *Game) connectAndRegister() error {
 		g.cli.Listen(g.ctx)
 		log.Debugf("listen end")
 		g.readyToSend = false
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond)
 	}
 	return nil
 }
@@ -130,13 +147,13 @@ func (g *Game) LoadOriginalObject(objectID string) error {
 			x, _ := strconv.Atoi(sp[0])
 			y, _ := strconv.Atoi(sp[1])
 			b := box{colour: color.RGBA{c.Data[0], c.Data[1], c.Data[2], c.Data[3]}, Point: image.Point{x, y}}
-			g.boxes[image.Point{x, y}] = b
+			g.object.boxes[image.Point{x, y}] = b
 		}
 	}
 
 	// now take anything in the buffer and add to boxes
 	for _, b := range g.buffer {
-		g.boxes[b.Point] = b
+		g.object.boxes[b.Point] = b
 	}
 
 	// clear the buffer
@@ -149,27 +166,31 @@ func (g *Game) LoadOriginalObject(objectID string) error {
 	return nil
 }
 
-func (g *Game) cb(c *client.ChangeConfirmation) error {
-	if c.PropertyID != "" {
+func (g *Game) cb(change any) error {
 
-		g.callbackCount++
-		sp := strings.Split(c.PropertyID, "-")
-		x, _ := strconv.Atoi(sp[0])
-		y, _ := strconv.Atoi(sp[1])
+	obj := change.(GameObject)
+	g.object = &obj
+	/*
+		if obj.PropertyID != "" {
 
-		b := box{colour: color.RGBA{c.Data[0], c.Data[1], c.Data[2], c.Data[3]}, Point: image.Point{x, y}}
+			g.callbackCount++
+			sp := strings.Split(c.PropertyID, "-")
+			x, _ := strconv.Atoi(sp[0])
+			y, _ := strconv.Atoi(sp[1])
 
-		// if full/orig doc not loaded, then do NOT put these updates into g.boxes but put them in the buffer.
-		if !g.fullDocLoaded {
-			g.buffer = append(g.buffer, b)
-			return nil
-		}
+			b := box{colour: color.RGBA{c.Data[0], c.Data[1], c.Data[2], c.Data[3]}, Point: image.Point{x, y}}
 
-		// otherwise... update the box.
-		g.boxUpdateLock.Lock()
-		g.boxes[image.Point{x, y}] = b
-		g.boxUpdateLock.Unlock()
-	}
+			// if full/orig doc not loaded, then do NOT put these updates into g.boxes but put them in the buffer.
+			if !g.fullDocLoaded {
+				g.buffer = append(g.buffer, b)
+				return nil
+			}
+
+			// otherwise... update the box.
+			g.boxUpdateLock.Lock()
+			g.object.boxes[image.Point{x, y}] = b
+			g.boxUpdateLock.Unlock()
+		} */
 
 	return nil
 }
@@ -179,7 +200,7 @@ func (g *Game) generateBoxes() {
 	h := g.screenheight / g.boxSize
 	for x := 0; x < w; x++ {
 		for y := 0; y < h; y++ {
-			g.boxes[image.Point{x, y}] = box{colour: color.RGBA{0, 0, 0, 255}, Point: image.Point{x, y}}
+			g.object.boxes[image.Point{x, y}] = box{colour: color.RGBA{0, 0, 0, 255}, Point: image.Point{x, y}}
 		}
 	}
 }
@@ -227,11 +248,11 @@ func (g *Game) Update() error {
 				}
 
 				g.boxUpdateLock.Lock()
-				g.boxes[image.Point{x, y}] = box{colour: color.RGBA{rr, gg, bb, 255}, Point: image.Point{x, y}}
+				g.object.boxes[image.Point{x, y}] = box{colour: color.RGBA{rr, gg, bb, 255}, Point: image.Point{x, y}}
 				g.boxUpdateLock.Unlock()
 
 				change := client.OutgoingChange{ObjectID: g.objectID, PropertyID: prop, Data: []byte{rr, gg, bb, 255}}
-				err := g.cli.SendChange(&change)
+				err := g.cli.SendObject(g.objectID, g.object)
 				if err != nil {
 					log.Errorf("Cannot send %v", change)
 				}
@@ -250,7 +271,7 @@ func (g *Game) generateHashOfBoxes() string {
 
 	red := 0
 	g.boxUpdateLock.Lock()
-	for _, v := range g.boxes {
+	for _, v := range g.object.boxes {
 		red += int(v.colour.R)
 	}
 	g.boxUpdateLock.Unlock()
@@ -264,15 +285,13 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if g.readyToDraw {
 		g.boxUpdateLock.Lock()
 
-		for _, box := range g.boxes {
+		for _, box := range g.object.boxes {
 			ebitenutil.DrawRect(screen, float64(box.X*g.boxSize), float64(box.Y*g.boxSize), float64(g.boxSize), float64(g.boxSize), box.colour)
 		}
 		g.boxUpdateLock.Unlock()
 		//fmt.Printf("draw took %d ms\n", time.Since(t).Milliseconds())
 
 	}
-	ebitenutil.DebugPrint(screen, fmt.Sprintf("CONFLICTS : %d", g.cli.GetConflictsCount()))
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("HASH : %s", g.generateHashOfBoxes()), 0, 20)
 
 	if time.Now().Sub(g.startTime) > time.Second {
 		secsSinceStart := time.Since(g.startTime).Seconds()
@@ -282,9 +301,11 @@ func (g *Game) Draw(screen *ebiten.Image) {
 		g.startTime = time.Now()
 	}
 
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("TOT CB : %d", g.totalCallbackCount), 0, 30)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("CB : %0.2f", g.cbrps), 0, 40)
-	ebitenutil.DebugPrintAt(screen, fmt.Sprintf("CHANGES : %d", g.cli.GetChangeCount()), 0, 50)
+	text.Draw(screen, fmt.Sprintf("CONFLICTS : %d", g.cli.GetConflictsCount()), g.mplusBigFont, 0, 30, color.White)
+	text.Draw(screen, fmt.Sprintf("HASH : %s", g.generateHashOfBoxes()), g.mplusBigFont, 0, 60, color.White)
+	text.Draw(screen, fmt.Sprintf("TOT CB : %d", g.totalCallbackCount), g.mplusBigFont, 0, 90, color.White)
+	text.Draw(screen, fmt.Sprintf("CB : %0.2f", g.cbrps), g.mplusBigFont, 0, 120, color.White)
+	text.Draw(screen, fmt.Sprintf("CHANGES : %d", g.cli.GetChangeCount()), g.mplusBigFont, 0, 150, color.White)
 
 }
 
@@ -292,6 +313,26 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (screenWidth, screenHeigh
 	return g.screenwidth, g.screenheight
 }
 
+func (g *Game) setupFont() {
+	tt, err := opentype.Parse(fonts.MPlus1pRegular_ttf)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	const dpi = 72
+	g.mplusBigFont, err = opentype.NewFace(tt, &opentype.FaceOptions{
+		Size:    24,
+		DPI:     dpi,
+		Hinting: font.HintingFull,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Adjust the line height.
+	g.mplusBigFont = text.FaceWithLineHeight(g.mplusBigFont, 54)
+
+}
 func main() {
 
 	host := flag.String("host", "10.0.0.108:50051", "host:port of server")
@@ -316,6 +357,7 @@ func main() {
 	g.rps = *rps
 	g.startTime = time.Now()
 
+	g.setupFont()
 	err := g.LoadOriginalObject(*objectID)
 	if err != nil {
 		log.Fatalf("unable to load original object: %v", err)
@@ -341,4 +383,65 @@ func main() {
 	if err := ebiten.RunGame(g); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// Converts from our internal object to what the client wants.
+// Returns objectid, actual object and error.
+// Keeping objectid separate due to not knowing if the client object has an objectid property.
+// Only update the clientObject if the property has updated property field to true (means updated from server)
+// This is going to loop over all properties in the client object...  need to find a more efficient way.
+func (g *Game) ConvertFromObject(object *client.Object) (string, any, error) {
+
+	for k, v := range object.Properties {
+
+		// only care if property has been updated from server.
+		if v.Updated {
+			sp := strings.Split(k, "-")
+			if len(sp) != 2 {
+				return "", nil, fmt.Errorf("invalid property name: %s", k)
+			}
+			x, err := strconv.Atoi(sp[0])
+			if err != nil {
+				return "", nil, fmt.Errorf("invalid X property value: %s", sp[0])
+			}
+			y, err := strconv.Atoi(sp[1])
+			if err != nil {
+				return "", nil, fmt.Errorf("invalid property name: %s", sp[1])
+			}
+
+			p := image.Point{x, y}
+
+			b := box{colour: color.RGBA{v.Data[0], v.Data[1], v.Data[2], v.Data[3]}, Point: p}
+			g.boxUpdateLock.Lock()
+			g.object.boxes[p] = b
+			g.boxUpdateLock.Unlock()
+		}
+	}
+
+	return "", nil, nil
+}
+
+// ConvertToObject converts a clients object TO the internal object.
+// It takes in an existing internal object (if one exists) and updates it with the new data.
+// It returns a pointer to the internal object.
+// If the existingObject is nil, then it creates a new one.
+func (g *Game) ConvertToObject(objectID string, existingObject *client.Object, clientObject any) (*client.Object, error) {
+	var obj *client.Object
+	if existingObject == nil {
+		obj = &client.Object{
+			ObjectID: objectID,
+		}
+	} else {
+		obj = existingObject
+	}
+
+	gameObject := clientObject.(*GameObject)
+
+	for _, box := range gameObject.boxes {
+		propertyID := fmt.Sprintf("%d-%d", box.X, box.Y)
+		data := []byte{box.colour.R, box.colour.G, box.colour.B, 255}
+		obj.AdjustProperty(propertyID, data)
+	}
+
+	return obj, nil
 }
