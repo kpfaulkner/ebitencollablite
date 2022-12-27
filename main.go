@@ -380,7 +380,7 @@ func main() {
 // Keeping objectid separate due to not knowing if the client object has an objectid property.
 // Only update the clientObject if the property has updated property field to true (means updated from server)
 // This is going to loop over all properties in the client object...  need to find a more efficient way.
-func (g *Game) ConvertFromObject(object *client.Object) error {
+func (g *Game) ConvertFromObject(object *client.ClientObject) error {
 
 	for k, v := range object.Properties {
 
@@ -415,10 +415,10 @@ func (g *Game) ConvertFromObject(object *client.Object) error {
 // It takes in an existing internal object (if one exists) and updates it with the new data.
 // It returns a pointer to the internal object.
 // If the existingObject is nil, then it creates a new one.
-func (g *Game) ConvertToObject(objectID string, existingObject *client.Object, clientObject any) (*client.Object, error) {
-	var obj *client.Object
+func (g *Game) ConvertToObject(objectID string, existingObject *client.ClientObject, clientObject any) (*client.ClientObject, error) {
+	var obj *client.ClientObject
 	if existingObject == nil {
-		obj = &client.Object{
+		obj = &client.ClientObject{
 			ObjectID: objectID,
 		}
 	} else {
