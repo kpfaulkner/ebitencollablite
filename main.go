@@ -108,8 +108,6 @@ func (g *Game) connectAndRegister() error {
 
 	for {
 		g.readyToSend = false
-		g.cli.RegisterCallback(g.cb)
-
 		g.cli.RegisterConverters(g.ConvertFromObject, g.ConvertToObject)
 		err := g.cli.Connect(g.ctx)
 		if err != nil {
@@ -150,14 +148,6 @@ func (g *Game) LoadOriginalObject(objectID string) error {
 			g.object.boxes[image.Point{x, y}] = b
 		}
 	}
-
-	// now take anything in the buffer and add to boxes
-	for _, b := range g.buffer {
-		g.object.boxes[b.Point] = b
-	}
-
-	// clear the buffer
-	g.buffer = []box{}
 
 	g.fullDocLoaded = true
 	g.readyToSend = true
@@ -390,7 +380,7 @@ func main() {
 // Keeping objectid separate due to not knowing if the client object has an objectid property.
 // Only update the clientObject if the property has updated property field to true (means updated from server)
 // This is going to loop over all properties in the client object...  need to find a more efficient way.
-func (g *Game) ConvertFromObject(object *client.Object) (string, any, error) {
+func (g *Game) ConvertFromObject(object *client.Object) error {
 
 	for k, v := range object.Properties {
 
@@ -398,15 +388,15 @@ func (g *Game) ConvertFromObject(object *client.Object) (string, any, error) {
 		if v.Updated {
 			sp := strings.Split(k, "-")
 			if len(sp) != 2 {
-				return "", nil, fmt.Errorf("invalid property name: %s", k)
+				return fmt.Errorf("invalid property name: %s", k)
 			}
 			x, err := strconv.Atoi(sp[0])
 			if err != nil {
-				return "", nil, fmt.Errorf("invalid X property value: %s", sp[0])
+				return fmt.Errorf("invalid X property value: %s", sp[0])
 			}
 			y, err := strconv.Atoi(sp[1])
 			if err != nil {
-				return "", nil, fmt.Errorf("invalid property name: %s", sp[1])
+				return fmt.Errorf("invalid property name: %s", sp[1])
 			}
 
 			p := image.Point{x, y}
@@ -418,7 +408,7 @@ func (g *Game) ConvertFromObject(object *client.Object) (string, any, error) {
 		}
 	}
 
-	return "", nil, nil
+	return nil
 }
 
 // ConvertToObject converts a clients object TO the internal object.
