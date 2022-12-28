@@ -80,10 +80,11 @@ type Game struct {
 
 	objectID string
 
-	startTime time.Time
-	cbrps     float64
-
-	mplusBigFont font.Face
+	startTime      time.Time
+	cbrps          float64
+	nextUpdateTime time.Time
+	updateDuration time.Duration
+	mplusBigFont   font.Face
 }
 
 func NewGame(boxSize int, widthInBoxes int, heightInBoxes int, objectID string, host string) *Game {
@@ -201,14 +202,9 @@ func (g *Game) Update() error {
 	// generate own changes... send them off... and also get confirmation.
 	// do 10 changes.
 
-	g.updateSpeedCount++
-
-	modder := ebiten.TPS() / g.rps
-	if g.updateSpeedCount >= ebiten.TPS() {
-		g.updateSpeedCount = 0
-	}
-
-	if g.updateSpeedCount%modder != 0 {
+	if time.Now().After(g.nextUpdateTime) {
+		g.nextUpdateTime = time.Now().Add(g.updateDuration)
+	} else {
 		return nil
 	}
 
@@ -345,6 +341,7 @@ func main() {
 	g.keepGreen = *green
 	g.keepRed = *red
 	g.rps = *rps
+	g.updateDuration = time.Second / time.Duration(g.rps)
 	g.startTime = time.Now()
 
 	g.setupFont()
@@ -382,6 +379,10 @@ func main() {
 // This is going to loop over all properties in the client object...  need to find a more efficient way.
 func (g *Game) ConvertFromObject(object *client.ClientObject) error {
 
+	g.callbackCount++
+
+	object.Lock.Lock()
+	defer object.Lock.Unlock()
 	for k, v := range object.Properties {
 
 		// only care if property has been updated from server.
@@ -430,7 +431,7 @@ func (g *Game) ConvertToObject(objectID string, existingObject *client.ClientObj
 	for _, box := range gameObject.boxes {
 		propertyID := fmt.Sprintf("%d-%d", box.X, box.Y)
 		data := []byte{box.colour.R, box.colour.G, box.colour.B, 255}
-		obj.AdjustProperty(propertyID, data)
+		obj.AdjustProperty(propertyID, data, true, false)
 	}
 
 	return obj, nil
