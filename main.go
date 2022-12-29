@@ -171,35 +171,6 @@ func (g *Game) LoadOriginalObject(objectID string) error {
 	return nil
 }
 
-func (g *Game) cb(change any) error {
-
-	obj := change.(GameObject)
-	g.object = &obj
-	/*
-		if obj.PropertyID != "" {
-
-			g.callbackCount++
-			sp := strings.Split(c.PropertyID, "-")
-			x, _ := strconv.Atoi(sp[0])
-			y, _ := strconv.Atoi(sp[1])
-
-			b := box{colour: color.RGBA{c.Data[0], c.Data[1], c.Data[2], c.Data[3]}, Point: image.Point{x, y}}
-
-			// if full/orig doc not loaded, then do NOT put these updates into g.boxes but put them in the buffer.
-			if !g.fullDocLoaded {
-				g.buffer = append(g.buffer, b)
-				return nil
-			}
-
-			// otherwise... update the box.
-			g.boxUpdateLock.Lock()
-			g.object.boxes[image.Point{x, y}] = b
-			g.boxUpdateLock.Unlock()
-		} */
-
-	return nil
-}
-
 func (g *Game) generateBoxes() {
 	w := g.screenwidth / g.boxSize
 	h := g.screenheight / g.boxSize
@@ -352,8 +323,13 @@ func main() {
 	red := flag.Bool("red", false, "keep red static")
 	green := flag.Bool("green", false, "keep green static")
 	blue := flag.Bool("blue", false, "keep blue static")
-	rps := flag.Int("rps", 10, "requests/updates per second")
+	rps := flag.Int("rps", 10, "requests/updates per second. Max of 30")
 	flag.Parse()
+
+	if *rps > 30 {
+		fmt.Printf("rps cannot be more than 30")
+		return
+	}
 
 	common.SetLogLevel(*logLevel)
 
