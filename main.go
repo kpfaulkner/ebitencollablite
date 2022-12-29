@@ -32,13 +32,26 @@ type box struct {
 }
 
 type GameObject struct {
-	boxes map[image.Point]box
+	boxes         map[image.Point]box
+	boxUpdateLock sync.Mutex
 }
 
 func NewGameObject() *GameObject {
 	g := GameObject{}
 	g.boxes = make(map[image.Point]box)
 	return &g
+}
+
+func (g *GameObject) GetBoxes() map[image.Point]box {
+	newMap := make(map[image.Point]box, len(g.boxes))
+
+	g.boxUpdateLock.Lock()
+	defer g.boxUpdateLock.Unlock()
+	for k, v := range g.boxes {
+		newMap[k] = v
+	}
+
+	return newMap
 }
 
 type Game struct {
@@ -52,8 +65,7 @@ type Game struct {
 	cli *client.Client
 	ctx context.Context
 
-	sending       bool
-	boxUpdateLock sync.Mutex
+	sending bool
 
 	// indicates update/draw should do its thing
 	readyToSend bool
@@ -75,6 +87,7 @@ type Game struct {
 
 	callbackCount      int
 	totalCallbackCount int
+	sendCount          int
 
 	rps int
 
@@ -82,6 +95,7 @@ type Game struct {
 
 	startTime      time.Time
 	cbrps          float64
+	sendsPerSec    float64
 	nextUpdateTime time.Time
 	updateDuration time.Duration
 	mplusBigFont   font.Face
@@ -233,15 +247,16 @@ func (g *Game) Update() error {
 					gg = byte(rand.Intn(155) + 100)
 				}
 
-				g.boxUpdateLock.Lock()
+				g.object.boxUpdateLock.Lock()
 				g.object.boxes[image.Point{x, y}] = box{colour: color.RGBA{rr, gg, bb, 255}, Point: image.Point{x, y}}
-				g.boxUpdateLock.Unlock()
+				g.object.boxUpdateLock.Unlock()
 
 				change := client.OutgoingChange{ObjectID: g.objectID, PropertyID: prop, Data: []byte{rr, gg, bb, 255}}
 				err := g.cli.SendObject(g.objectID, g.object)
 				if err != nil {
 					log.Errorf("Cannot send %v", change)
 				}
+				g.sendCount++
 			}
 		}
 
@@ -256,11 +271,11 @@ func (g *Game) generateHashOfBoxes() string {
 	// just add it up the red values of all the pixels... good enough
 
 	red := 0
-	g.boxUpdateLock.Lock()
+	g.object.boxUpdateLock.Lock()
 	for _, v := range g.object.boxes {
 		red += int(v.colour.R)
 	}
-	g.boxUpdateLock.Unlock()
+	g.object.boxUpdateLock.Unlock()
 	return fmt.Sprintf("%d", red)
 }
 
@@ -269,12 +284,12 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	//t := time.Now()
 
 	if g.readyToDraw {
-		g.boxUpdateLock.Lock()
+		g.object.boxUpdateLock.Lock()
 
 		for _, box := range g.object.boxes {
 			ebitenutil.DrawRect(screen, float64(box.X*g.boxSize), float64(box.Y*g.boxSize), float64(g.boxSize), float64(g.boxSize), box.colour)
 		}
-		g.boxUpdateLock.Unlock()
+		g.object.boxUpdateLock.Unlock()
 		//fmt.Printf("draw took %d ms\n", time.Since(t).Milliseconds())
 
 	}
@@ -282,8 +297,10 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	if time.Now().Sub(g.startTime) > time.Second {
 		secsSinceStart := time.Since(g.startTime).Seconds()
 		g.cbrps = float64(g.callbackCount) / secsSinceStart
+		g.sendsPerSec = float64(g.sendCount) / secsSinceStart
 		g.totalCallbackCount += g.callbackCount
 		g.callbackCount = 0
+		g.sendCount = 0
 		g.startTime = time.Now()
 	}
 
@@ -291,7 +308,8 @@ func (g *Game) Draw(screen *ebiten.Image) {
 	text.Draw(screen, fmt.Sprintf("HASH : %s", g.generateHashOfBoxes()), g.mplusBigFont, 0, 60, color.White)
 	text.Draw(screen, fmt.Sprintf("TOT CB : %d", g.totalCallbackCount), g.mplusBigFont, 0, 90, color.White)
 	text.Draw(screen, fmt.Sprintf("CB : %0.2f", g.cbrps), g.mplusBigFont, 0, 120, color.White)
-	text.Draw(screen, fmt.Sprintf("CHANGES : %d", g.cli.GetChangeCount()), g.mplusBigFont, 0, 150, color.White)
+	text.Draw(screen, fmt.Sprintf("SPS : %0.2f", g.sendsPerSec), g.mplusBigFont, 0, 150, color.White)
+	text.Draw(screen, fmt.Sprintf("CHANGES : %d", g.cli.GetChangeCount()), g.mplusBigFont, 0, 180, color.White)
 
 }
 
@@ -320,6 +338,12 @@ func (g *Game) setupFont() {
 
 }
 func main() {
+
+	defer func() {
+		if err := recover(); err != nil {
+			log.Println("panic occurred:", err)
+		}
+	}()
 
 	host := flag.String("host", "10.0.0.108:50051", "host:port of server")
 	objectID := flag.String("id", "graphical", "id of object")
@@ -403,9 +427,9 @@ func (g *Game) ConvertFromObject(object *client.ClientObject) error {
 			p := image.Point{x, y}
 
 			b := box{colour: color.RGBA{v.Data[0], v.Data[1], v.Data[2], v.Data[3]}, Point: p}
-			g.boxUpdateLock.Lock()
+			g.object.boxUpdateLock.Lock()
 			g.object.boxes[p] = b
-			g.boxUpdateLock.Unlock()
+			g.object.boxUpdateLock.Unlock()
 		}
 	}
 
@@ -428,7 +452,8 @@ func (g *Game) ConvertToObject(objectID string, existingObject *client.ClientObj
 
 	gameObject := clientObject.(*GameObject)
 
-	for _, box := range gameObject.boxes {
+	boxes := gameObject.GetBoxes()
+	for _, box := range boxes {
 		propertyID := fmt.Sprintf("%d-%d", box.X, box.Y)
 		data := []byte{box.colour.R, box.colour.G, box.colour.B, 255}
 		obj.AdjustProperty(propertyID, data, true, false)
