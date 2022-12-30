@@ -183,13 +183,8 @@ func (g *Game) generateBoxes() {
 
 func (g *Game) Update() error {
 
-	//t := time.Now()
-	// generate own changes... send them off... and also get confirmation.
-	// do 10 changes.
-
-	if time.Now().After(g.nextUpdateTime) {
-		g.nextUpdateTime = time.Now().Add(g.updateDuration)
-	} else {
+	// if already sent quota for this second...  then skip
+	if g.sendCount > g.rps {
 		return nil
 	}
 
@@ -326,6 +321,7 @@ func main() {
 	rps := flag.Int("rps", 10, "requests/updates per second. Max of 30")
 	flag.Parse()
 
+	// arbitrary limit...
 	if *rps > 30 {
 		fmt.Printf("rps cannot be more than 30")
 		return
