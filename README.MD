@@ -1,6 +1,7 @@
 # EbitenCollablite
 
 EbitenCollablite is an [Ebitengine](https://ebitengine.org/) based demo for using the [Collablite](https://github.com/kpfaulkner/collablite) sync server.
+This is cross platform and can be built for Windows, Mac and Linux.
 
 
 ## What does it do?
