@@ -2,10 +2,9 @@ module github.com/kpfaulkner/ebitencollablite
 
 go 1.19
 
-
 require (
 	github.com/hajimehoshi/ebiten/v2 v2.4.14
-	github.com/kpfaulkner/collablite v0.0.0-20221214080826-12ae9353c6de
+	github.com/kpfaulkner/collablite v0.0.0-20230105220833-81e26e1acc79
 	github.com/sirupsen/logrus v1.9.0
 )
 
