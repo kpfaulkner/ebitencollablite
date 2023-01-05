@@ -121,6 +121,7 @@ func NewGame(boxSize int, widthInBoxes int, heightInBoxes int, objectID string, 
 
 func (g *Game) connectAndRegister() error {
 
+	restarting := false
 	for {
 		g.readyToSend = false
 		g.cli.RegisterConverters(g.ConvertFromObject, g.ConvertToObject)
@@ -134,11 +135,20 @@ func (g *Game) connectAndRegister() error {
 			log.Fatalf("Unable to register object server: %v", err)
 		}
 
+		if restarting {
+			err = g.LoadOriginalObject(g.objectID)
+			if err != nil {
+				log.Fatalf("unable to load original object: %v", err)
+			}
+		}
+
 		g.readyToSend = true
+		g.cli.ClearUnconfirmedChangesTracking()
 		log.Debugf("listen start")
 		g.cli.Listen(g.ctx)
 		log.Debugf("listen end")
 		g.readyToSend = false
+		restarting = true
 		time.Sleep(100 * time.Millisecond)
 	}
 	return nil
@@ -152,6 +162,7 @@ func (g *Game) LoadOriginalObject(objectID string) error {
 		log.Fatalf("unable to get original object: %v", err)
 	}
 
+	g.object.boxUpdateLock.Lock()
 	for _, c := range origChanges {
 
 		// yes this is duped code.. just trying to see if the idea works. If so, will refactor to be common. FIXME(kpfaulkner)
@@ -163,6 +174,7 @@ func (g *Game) LoadOriginalObject(objectID string) error {
 			g.object.boxes[image.Point{x, y}] = b
 		}
 	}
+	g.object.boxUpdateLock.Unlock()
 
 	g.fullDocLoaded = true
 	g.readyToSend = true
@@ -183,6 +195,7 @@ func (g *Game) generateBoxes() {
 
 func (g *Game) Update() error {
 
+	log.Debugf("update called at %s", time.Now().Format("2006-01-02 15:04:05.000000"))
 	// if already sent quota for this second...  then skip
 	if g.sendCount > g.rps {
 		return nil
@@ -193,37 +206,37 @@ func (g *Game) Update() error {
 	var gg byte
 	if g.readyToSend {
 		if g.sending {
-			for i := 0; i < 1; i++ {
-				x := rand.Intn(g.widthInBoxes)
-				y := rand.Intn(g.heightInBoxes)
-				prop := fmt.Sprintf("%d-%d", x, y)
 
-				rr = 0
-				gg = 0
-				bb = 0
+			x := rand.Intn(g.widthInBoxes)
+			y := rand.Intn(g.heightInBoxes)
+			prop := fmt.Sprintf("%d-%d", x, y)
 
-				if g.keepRed {
-					rr = byte(rand.Intn(155) + 100)
-				}
+			rr = 0
+			gg = 0
+			bb = 0
 
-				if g.keepBlue {
-					bb = byte(rand.Intn(155) + 100)
-				}
-				if g.keepGreen {
-					gg = byte(rand.Intn(155) + 100)
-				}
-
-				g.object.boxUpdateLock.Lock()
-				g.object.boxes[image.Point{x, y}] = box{colour: color.RGBA{rr, gg, bb, 255}, Point: image.Point{x, y}}
-				g.object.boxUpdateLock.Unlock()
-
-				change := client.OutgoingChange{ObjectID: g.objectID, PropertyID: prop, Data: []byte{rr, gg, bb, 255}}
-				err := g.cli.SendObject(g.objectID, g.object)
-				if err != nil {
-					log.Errorf("Cannot send %v", change)
-				}
-				g.sendCount++
+			if g.keepRed {
+				rr = byte(rand.Intn(155) + 100)
 			}
+
+			if g.keepBlue {
+				bb = byte(rand.Intn(155) + 100)
+			}
+			if g.keepGreen {
+				gg = byte(rand.Intn(155) + 100)
+			}
+
+			g.object.boxUpdateLock.Lock()
+			g.object.boxes[image.Point{x, y}] = box{colour: color.RGBA{rr, gg, bb, 255}, Point: image.Point{x, y}}
+			g.object.boxUpdateLock.Unlock()
+
+			change := client.OutgoingChange{ObjectID: g.objectID, PropertyID: prop, Data: []byte{rr, gg, bb, 255}}
+			err := g.cli.SendObject(g.objectID, g.object)
+			if err != nil {
+				log.Errorf("Cannot send %v", change)
+			}
+			g.sendCount++
+
 		}
 
 	}
@@ -341,6 +354,8 @@ func main() {
 	g.startTime = time.Now()
 
 	g.setupFont()
+
+	// move to connectAndRegister?  FIXME(kpfaulkner)
 	err := g.LoadOriginalObject(*objectID)
 	if err != nil {
 		log.Fatalf("unable to load original object: %v", err)

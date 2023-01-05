@@ -2,7 +2,6 @@ module github.com/kpfaulkner/ebitencollablite
 
 go 1.19
 
-replace github.com/kpfaulkner/collablite => ../collablite
 
 require (
 	github.com/hajimehoshi/ebiten/v2 v2.4.14
