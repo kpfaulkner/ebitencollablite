@@ -4,7 +4,7 @@ go 1.19
 
 require (
 	github.com/hajimehoshi/ebiten/v2 v2.4.14
-	github.com/kpfaulkner/collablite v0.0.0-20230105220833-81e26e1acc79
+	github.com/kpfaulkner/collablite v0.0.0-20230105234602-1b61f9bd3f6e
 	github.com/sirupsen/logrus v1.9.0
 )
 

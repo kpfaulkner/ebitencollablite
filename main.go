@@ -143,7 +143,6 @@ func (g *Game) connectAndRegister() error {
 		}
 
 		g.readyToSend = true
-		g.cli.ClearUnconfirmedChangesTracking()
 		log.Debugf("listen start")
 		g.cli.Listen(g.ctx)
 		log.Debugf("listen end")
